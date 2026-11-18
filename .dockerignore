@@ -1,0 +1,20 @@
+# Root ignore file. Each service also has its own .dockerignore because its
+# Docker build context is the service directory (not the repo root).
+.git
+.github
+.env
+.env.*
+!.env.example
+**/__pycache__
+**/*.py[cod]
+**/.venv
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+**/.coverage
+**/tests
+node_modules
+**/.next
+docs
+TODO.md
+README.md

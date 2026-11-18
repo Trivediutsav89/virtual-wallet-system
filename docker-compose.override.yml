@@ -1,0 +1,81 @@
+# ---------------------------------------------------------------------------
+# Local development overrides. Automatically merged by `docker compose up`.
+#
+# Adds:
+#   * host-published ports for internal services (debugging only!)
+#   * source bind mounts + uvicorn --reload
+#
+# Use `docker compose -f docker-compose.yml up` to run without any of this.
+# ---------------------------------------------------------------------------
+services:
+  # Data stores: published so host tools (psql, local pytest, redis-cli) can
+  # reach them. The base file keeps them network-internal.
+  postgres:
+    ports:
+      - "${POSTGRES_HOST_PORT:-5433}:5432"
+
+  redis:
+    ports:
+      - "${REDIS_HOST_PORT:-6380}:6379"
+
+  auth:
+    ports:
+      - "${AUTH_HOST_PORT:-8001}:8000"
+    volumes:
+      - ./backend/services/auth/app:/app/app
+      - ./backend/services/auth/tests:/app/tests
+      - ./backend/services/auth/alembic:/app/alembic
+      - ./backend/services/auth/alembic.ini:/app/alembic.ini
+    command:
+      - uvicorn
+      - app.main:app
+      - --host=0.0.0.0
+      - --port=8000
+      - --reload
+      - --reload-dir=/app/app
+
+  profile:
+    ports:
+      - "${PROFILE_HOST_PORT:-8002}:8000"
+    volumes:
+      - ./backend/services/profile/app:/app/app
+      - ./backend/services/profile/tests:/app/tests
+      - ./backend/services/profile/alembic:/app/alembic
+      - ./backend/services/profile/alembic.ini:/app/alembic.ini
+    command:
+      - uvicorn
+      - app.main:app
+      - --host=0.0.0.0
+      - --port=8000
+      - --reload
+      - --reload-dir=/app/app
+
+  wallet:
+    ports:
+      - "${WALLET_HOST_PORT:-8003}:8000"
+    volumes:
+      - ./backend/services/wallet/app:/app/app
+      - ./backend/services/wallet/tests:/app/tests
+      - ./backend/services/wallet/alembic:/app/alembic
+      - ./backend/services/wallet/alembic.ini:/app/alembic.ini
+    command:
+      - uvicorn
+      - app.main:app
+      - --host=0.0.0.0
+      - --port=8000
+      - --reload
+      - --reload-dir=/app/app
+
+  gateway:
+    ports:
+      - "${GATEWAY_HOST_PORT:-8000}:8000"
+    volumes:
+      - ./backend/services/gateway/app:/app/app
+      - ./backend/services/gateway/tests:/app/tests
+    command:
+      - uvicorn
+      - app.main:app
+      - --host=0.0.0.0
+      - --port=8000
+      - --reload
+      - --reload-dir=/app/app

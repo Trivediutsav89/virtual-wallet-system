@@ -1,0 +1,191 @@
+# ---------------------------------------------------------------------------
+# Base topology: production-shaped.
+#
+#   docker compose -f docker-compose.yml up        # only gateway is public
+#   docker compose up                             # + dev override (see below)
+#
+# The dev override publishes internal service ports and bind-mounts source for
+# hot reload. It is merged automatically by `docker compose up`.
+# ---------------------------------------------------------------------------
+name: virtual-wallet
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-service: &service
+  restart: unless-stopped
+  init: true
+  logging: *default-logging
+  networks:
+    - app
+
+# Healthcheck that needs no curl/wget in the image.
+x-healthcheck: &http-healthcheck
+  test:
+    - CMD
+    - python
+    - -c
+    - |
+      import sys, urllib.request
+      try:
+          urllib.request.urlopen("http://127.0.0.1:8000/healthz", timeout=3).read()
+      except Exception:
+          sys.exit(1)
+  interval: 10s
+  timeout: 5s
+  retries: 5
+  start_period: 10s
+
+services:
+  # -------------------------------------------------------------------------
+  # Data stores
+  # -------------------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    logging: *default-logging
+    networks:
+      - app
+    environment:
+      POSTGRES_USER: ${POSTGRES_SUPERUSER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_SUPERUSER_PASSWORD:?POSTGRES_SUPERUSER_PASSWORD is required}
+      POSTGRES_DB: postgres
+      # Consumed only by the init scripts in /docker-entrypoint-initdb.d.
+      AUTH_DB_PASSWORD: ${AUTH_DB_PASSWORD:?AUTH_DB_PASSWORD is required}
+      PROFILE_DB_PASSWORD: ${PROFILE_DB_PASSWORD:?PROFILE_DB_PASSWORD is required}
+      WALLET_DB_PASSWORD: ${WALLET_DB_PASSWORD:?WALLET_DB_PASSWORD is required}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./infrastructure/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    logging: *default-logging
+    networks:
+      - app
+    command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
+    volumes:
+      - ./infrastructure/redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+  # -------------------------------------------------------------------------
+  # Migrations: one-shot, runs before the owning service starts.
+  # Kept out of a Compose profile so a plain `up` always migrates first.
+  # -------------------------------------------------------------------------
+  auth-migrate:
+    <<: *service
+    restart: "no"
+    build:
+      context: ./backend/services/auth
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      APP_ENV: ${APP_ENV:-local}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      AUTH_DATABASE_URL: postgresql+asyncpg://auth_svc:${AUTH_DB_PASSWORD}@postgres:5432/auth_db
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # -------------------------------------------------------------------------
+  # Backend services
+  # -------------------------------------------------------------------------
+  auth:
+    <<: *service
+    build:
+      context: ./backend/services/auth
+    environment:
+      APP_ENV: ${APP_ENV:-local}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      AUTH_DATABASE_URL: postgresql+asyncpg://auth_svc:${AUTH_DB_PASSWORD}@postgres:5432/auth_db
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+      JWT_ISSUER: ${JWT_ISSUER:-virtual-wallet-auth}
+      ACCESS_TOKEN_TTL_MINUTES: ${ACCESS_TOKEN_TTL_MINUTES:-30}
+      BCRYPT_COST: ${BCRYPT_COST:-12}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      auth-migrate:
+        condition: service_completed_successfully
+    healthcheck: *http-healthcheck
+
+  profile:
+    <<: *service
+    build:
+      context: ./backend/services/profile
+    environment:
+      APP_ENV: ${APP_ENV:-local}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      PROFILE_DATABASE_URL: postgresql+asyncpg://profile_svc:${PROFILE_DB_PASSWORD}@postgres:5432/profile_db
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck: *http-healthcheck
+
+  wallet:
+    <<: *service
+    build:
+      context: ./backend/services/wallet
+    environment:
+      APP_ENV: ${APP_ENV:-local}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      WALLET_DATABASE_URL: postgresql+asyncpg://wallet_svc:${WALLET_DB_PASSWORD}@postgres:5432/wallet_db
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck: *http-healthcheck
+
+  gateway:
+    <<: *service
+    build:
+      context: ./backend/services/gateway
+    ports:
+      - "${GATEWAY_HOST_PORT:-8000}:8000"
+    environment:
+      APP_ENV: ${APP_ENV:-local}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+      JWT_ISSUER: ${JWT_ISSUER:-virtual-wallet-auth}
+      AUTH_SERVICE_URL: http://auth:8000
+      PROFILE_SERVICE_URL: http://profile:8000
+      WALLET_SERVICE_URL: http://wallet:8000
+      REDIS_URL: redis://redis:6379/0
+      RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED:-true}
+      RATE_LIMIT_DEFAULT: ${RATE_LIMIT_DEFAULT:-120/min}
+      RATE_LIMIT_AUTH: ${RATE_LIMIT_AUTH:-10/min}
+      HTTP_TIMEOUT_SECONDS: ${HTTP_TIMEOUT_SECONDS:-10}
+      TRUST_FORWARDED_FOR: ${TRUST_FORWARDED_FOR:-false}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+    depends_on:
+      redis:
+        condition: service_healthy
+      auth:
+        condition: service_healthy
+      profile:
+        condition: service_healthy
+      wallet:
+        condition: service_healthy
+    healthcheck: *http-healthcheck
+
+networks:
+  app:
+    driver: bridge
+
+volumes:
+  pgdata:
