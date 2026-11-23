@@ -3,9 +3,11 @@
 A five-day backend engineering MVP: four FastAPI microservices, one database per
 service, Redis-backed rate limiting, and a Next.js frontend (later stages).
 
-> **Stage 1 status:** infrastructure + Auth Service + API Gateway are implemented.
-> Profile and Wallet are health-only skeletons with their own database and
-> baseline migration. No wallet or profile logic, no refresh tokens, no UI yet.
+> **Status:** Stage 1 (infrastructure, Auth, Gateway) is complete and verified.
+> Day 2 adds functional Profile and Wallet services: lazy creation, profile
+> updates, simulated INR deposits/withdrawals, atomic balance updates, and
+> their own migrations and tests. No transfers, ledger, refresh tokens or UI
+> yet — see ADR-0005 for the Day 2/Day 3 balance decision.
 
 ## Architecture at a glance
 
@@ -36,6 +38,8 @@ host in the dev override purely for debugging.
 |---|---|
 | `docs/architecture.md` | Topology, request flow, trust boundaries |
 | `docs/api/auth.md` | Auth endpoints, claims, error codes |
+| `docs/api/profile.md` | Profile endpoints and validation rules |
+| `docs/api/wallet.md` | Wallet endpoints, money rules, simulated operations |
 | `docs/stages.md` | Stage-by-stage roadmap |
 | `docs/adr/` | Architecture decision records |
 | `TODO.md` | Live implementation checklist |
@@ -54,7 +58,8 @@ docker compose up --build
 ```
 
 On first boot the Postgres init scripts create the three databases and three
-least-privilege roles. `auth-migrate` applies migrations, then `auth` starts.
+least-privilege roles. One-shot `auth-migrate`, `profile-migrate` and
+`wallet-migrate` jobs apply each service's migrations before the services start.
 
 Smoke test through the gateway:
 
@@ -72,6 +77,26 @@ curl -X POST http://localhost:8000/api/v1/auth/login \
 # authenticated call
 curl http://localhost:8000/api/v1/auth/me \
   -H "Authorization: Bearer <access_token>"
+
+# profile (created lazily on first access)
+curl http://localhost:8000/api/v1/profile/me \
+  -H "Authorization: Bearer <access_token>"
+
+curl -X PATCH http://localhost:8000/api/v1/profile/me \
+  -H "Authorization: Bearer <access_token>" -H "Content-Type: application/json" \
+  -d '{"display_name":"Ada Lovelace"}'
+
+# wallet (created lazily with 0.00 INR)
+curl http://localhost:8000/api/v1/wallet/me \
+  -H "Authorization: Bearer <access_token>"
+
+curl -X POST http://localhost:8000/api/v1/wallet/deposit \
+  -H "Authorization: Bearer <access_token>" -H "Content-Type: application/json" \
+  -d '{"amount":"500.00"}'
+
+curl -X POST http://localhost:8000/api/v1/wallet/withdraw \
+  -H "Authorization: Bearer <access_token>" -H "Content-Type: application/json" \
+  -d '{"amount":"125.50"}'
 ```
 
 Windows users: the examples above are POSIX shell; use PowerShell equivalents
@@ -98,11 +123,13 @@ docker compose down                     # stop (keeps data)
 docker compose down -v                  # stop and wipe databases
 ```
 
-Migrations run automatically via the `auth-migrate` service. To run them
-manually:
+Migrations run automatically via the three `*-migrate` one-shot services. To
+run them manually:
 
 ```bash
 docker compose run --rm auth-migrate
+docker compose run --rm profile-migrate
+docker compose run --rm wallet-migrate
 ```
 
 ## Local (non-Docker) development
@@ -128,9 +155,11 @@ AUTH_TEST_DATABASE_URL="postgresql+asyncpg://auth_svc:<pw>@localhost:5433/auth_d
   uv run pytest
 ```
 
-Every service has its own suite; see
-`backend/services/auth/tests/README.md` for what is covered and how the
-DB-backed tests isolate themselves.
+Every service has its own suite. The DB-backed suites use separate
+`*_db_test` databases via `AUTH_TEST_DATABASE_URL`,
+`PROFILE_TEST_DATABASE_URL` and `WALLET_TEST_DATABASE_URL`; they skip cleanly
+when the DSN is absent. See `backend/services/auth/tests/README.md` for the
+isolation strategy shared by Profile and Wallet.
 
 ## Troubleshooting
 

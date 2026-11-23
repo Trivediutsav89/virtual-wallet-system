@@ -28,3 +28,18 @@ class AppError(Exception):
 
     def to_body(self) -> dict[str, Any]:
         return {"detail": {"code": self.code, "message": self.message}}
+
+
+def auth_required(message: str = "Authentication required.") -> AppError:
+    """The gateway did not supply a usable trusted identity."""
+    return AppError(
+        401,
+        "AUTH_REQUIRED",
+        message,
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+
+def profile_unavailable() -> AppError:
+    """A profile could not be resolved after a successful lazy create."""
+    return AppError(500, "INTERNAL_ERROR", "Profile could not be resolved.")

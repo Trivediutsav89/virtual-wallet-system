@@ -16,20 +16,29 @@ skeletons with baseline migrations, test suites and docs.
 register → login → authenticated request flow, with tests covering the full
 auth matrix and three databases whose ownership is enforced by grants.
 
-## Stage 2 — Wallet core
+## Stage 2 / Day 2 — Wallet core + Profile (implemented)
 
-- Accounts and a double-entry ledger (`entries` referencing `accounts`),
-  balances derived from entries, never stored as a mutable column.
+**Ships:** lazy `profiles` and `wallets` keyed by the trusted `user_id`,
+`GET/PATCH /profile/me`, `GET /wallet/me`, simulated `POST /deposit` and
+`POST /withdraw`, a stored `NUMERIC(18,2)` INR balance guarded by a CHECK
+constraint and conditional updates, one-shot migrate jobs, and DB-backed tests
+for lazy creation, ownership, atomicity, rollback and concurrency.
+
+**Does not ship:** transfers, double-entry ledger, transaction history,
+idempotency keys, avatar/preferences, FX or multi-currency.
+
+The original plan called for a double-entry ledger with derived balances.
+ADR-0005 records the deliberate Day 2 deviation: the stored balance is the MVP
+source of truth, and Day 3 introduces the immutable ledger plus an explicit
+reconciliation/migration step.
+
+## Stage 3 — Ledger and richer Profile
+
+- Immutable double-entry ledger and the migration/reconciliation from the Day 2
+  stored balance (ADR-0005).
 - Idempotency keys on transfers.
-- Lazy wallet creation on first authenticated access (idempotent on `user_id`).
-- Concurrency safety: `SELECT ... FOR UPDATE` or serializable transactions.
-- Tests for overdraft prevention, concurrency, and idempotency.
-
-## Stage 3 — Profile
-
-- Display name, avatar URL, preferences.
-- Lazy profile creation keyed by `user_id`.
-- `GET/PATCH /profile/me`.
+- Avatar URL and preferences on profiles.
+- `SELECT ... FOR UPDATE` or serializable transactions where the ledger needs it.
 
 ## Stage 4 — Frontend
 

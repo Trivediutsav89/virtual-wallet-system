@@ -101,6 +101,34 @@ services:
       postgres:
         condition: service_healthy
 
+  profile-migrate:
+    <<: *service
+    restart: "no"
+    build:
+      context: ./backend/services/profile
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      APP_ENV: ${APP_ENV:-local}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      PROFILE_DATABASE_URL: postgresql+asyncpg://profile_svc:${PROFILE_DB_PASSWORD}@postgres:5432/profile_db
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  wallet-migrate:
+    <<: *service
+    restart: "no"
+    build:
+      context: ./backend/services/wallet
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      APP_ENV: ${APP_ENV:-local}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      WALLET_DATABASE_URL: postgresql+asyncpg://wallet_svc:${WALLET_DB_PASSWORD}@postgres:5432/wallet_db
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   # -------------------------------------------------------------------------
   # Backend services
   # -------------------------------------------------------------------------
@@ -135,6 +163,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      profile-migrate:
+        condition: service_completed_successfully
     healthcheck: *http-healthcheck
 
   wallet:
@@ -148,6 +178,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      wallet-migrate:
+        condition: service_completed_successfully
     healthcheck: *http-healthcheck
 
   gateway:

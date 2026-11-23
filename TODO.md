@@ -108,10 +108,39 @@ Every one of these is written and statically checked; none has executed.
 
 ---
 
-## Stage 2+ (not started, recorded for scope control)
-- [ ] Wallet Service: accounts, double-entry ledger, balances, transfers
-- [ ] Profile Service: display name, preferences
-- [ ] Lazy wallet/profile creation keyed by `user_id` (no distributed write on signup)
+## Stage 2 / Day 2 — Profile + Wallet core
+
+### M10 · Profile Service
+- [x] `profiles` table + `0002_create_profiles` (unique `user_id`)
+- [x] Trusted `X-User-Id` dependency; no user id accepted from the body
+- [x] Lazy `GET /me`, partial `PATCH /me`, unknown fields rejected, null clears
+- [x] Unit tests + real-Postgres integration tests (incl. concurrent creation)
+- [x] Ruff + Mypy clean
+
+### M11 · Wallet Service
+- [x] `wallets` table + `0002_create_wallets` (NUMERIC(18,2), CHECK balance >= 0,
+      fixed INR)
+- [x] Lazy `GET /me`; simulated `POST /deposit` and `POST /withdraw`
+- [x] Decimal-only amounts, 2-decimal limit, 1,000,000.00 per-operation cap
+- [x] Conditional UPDATE money movement; overdraft → 409 INSUFFICIENT_FUNDS
+- [x] Unit + integration tests incl. concurrent withdrawal and rollback
+- [x] Ruff + Mypy clean
+
+### M12 · Integration and docs
+- [x] Gateway routing tests for profile/wallet paths (no gateway code change)
+- [x] One-shot `profile-migrate` / `wallet-migrate` Compose jobs
+- [x] `docs/api/profile.md`, `docs/api/wallet.md`, ADR-0005, README/architecture
+      updates, test DSNs in `.env.example`
+- [x] End-to-end register → login → profile → wallet → insufficient funds →
+      cross-user spoofing through the gateway
+
+### Earlier Stage 1 blockers — now resolved
+- [x] Live Postgres/Redis available; `docker compose up` verified
+- [x] Auth 15 DB-backed tests executed; full Stage 1 E2E verified
+
+### Future (not started)
+- [ ] Day 3: immutable ledger, transfer idempotency, balance reconciliation
+- [ ] Profile avatar/preferences
 - [ ] Refresh tokens / token revocation via `token_version`
 - [ ] Next.js login/register + dashboard
 - [ ] RS256 + JWKS; internal service auth; per-service Postgres instances

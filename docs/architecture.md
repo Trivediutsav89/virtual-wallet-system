@@ -39,7 +39,7 @@ published only in the dev override.
 ## 2. Request flow (authenticated call)
 
 ```
-1. Client                    GET /api/v1/wallet/accounts
+1. Client                    GET /api/v1/wallet/me
                              Authorization: Bearer <jwt>
 2. gateway  RequestID        assign/propagate X-Request-Id
 3. gateway  RateLimit        INCR rl:default:<ip>:<window>   → 429 on excess
@@ -48,7 +48,7 @@ published only in the dev override.
                              strip inbound X-User-*, X-Internal-*
                              inject X-User-Id, X-Token-Version, X-Request-Id
                              drop Authorization (downstream does not need it)
-6. gateway  Proxy            httpx → http://wallet:8000/accounts
+6. gateway  Proxy            httpx → http://wallet:8000/me
 7. wallet                    trusts X-User-Id (see trust boundary below)
 8. gateway                   pass through status, body, safe headers
 ```
@@ -75,8 +75,8 @@ beyond a private network (see ADR-0004).
 | Database | Role | Service | Notes |
 |---|---|---|---|
 | `auth_db` | `auth_svc` | Auth | `users` |
-| `profile_db` | `profile_svc` | Profile | empty until Stage 3 |
-| `wallet_db` | `wallet_svc` | Wallet | empty until Stage 2 |
+| `profile_db` | `profile_svc` | Profile | `profiles` (Day 2) |
+| `wallet_db` | `wallet_svc` | Wallet | `wallets` (Day 2, stored INR balance) |
 | `*_test` | same role | Pytest | never touched by running apps |
 
 No cross-database foreign keys. `user_id` is an opaque UUID owned by Auth.
@@ -107,9 +107,25 @@ The only value shared between two services is `JWT_SECRET`.
 | Upstream timeout | Gateway returns `504 UPSTREAM_TIMEOUT`. |
 | Database down | Service `/readyz` returns 503; traffic errors are 500s with no internals leaked. |
 | Duplicate email race | Unique index raises `IntegrityError` → `409 EMAIL_ALREADY_REGISTERED`. |
+| Concurrent first profile/wallet access | `INSERT ... ON CONFLICT DO NOTHING RETURNING` makes lazy creation idempotent. |
+| Concurrent withdrawals | Conditional `UPDATE ... WHERE balance >= amount` plus CHECK constraint prevents overdraft; loser gets `409 INSUFFICIENT_FUNDS`. |
 
 ## 8. Deliberate non-goals for Stage 1
 
 Refresh tokens, email verification, password reset, roles/permissions, wallet
 and profile features, UI screens, distributed tracing, Kafka, Kubernetes,
 service discovery, cross-service sagas.
+
+## 9. Day 2 additions
+
+| External route | Upstream path | Service | Behaviour |
+|---|---|---|---|
+| `GET /api/v1/profile/me` | `/me` | Profile | Lazy create + return |
+| `PATCH /api/v1/profile/me` | `/me` | Profile | Partial update; explicit null clears |
+| `GET /api/v1/wallet/me` | `/me` | Wallet | Lazy create with `0.00 INR` |
+| `POST /api/v1/wallet/deposit` | `/deposit` | Wallet | Atomic simulated deposit |
+| `POST /api/v1/wallet/withdraw` | `/withdraw` | Wallet | Atomic withdrawal, overdraft rejected |
+
+Gateway routing already supported these prefixes; only tests were added.
+Profile and Wallet trust only the gateway-injected `X-User-Id`. The mutable
+balance and its Day 3 ledger migration path are recorded in ADR-0005.

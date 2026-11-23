@@ -1,7 +1,7 @@
 """Wallet Service application factory.
 
-Stage 1 scope: health checks, configuration, logging, and database wiring.
-Wallet endpoints are intentionally absent (Stage 2).
+Health checks, configuration, logging and simulated wallet money operations.
+Identity is supplied exclusively by the gateway through ``X-User-Id`` (ADR-0004).
 """
 
 from __future__ import annotations
@@ -11,10 +11,13 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.api.health import router as health_router
+from app.api.routes.wallet import router as wallet_router
 from app.config import Settings, get_settings
 from app.db import engine
 from app.errors import AppError
@@ -48,6 +51,20 @@ def _register_exception_handlers(app: FastAPI) -> None:
             status_code=exc.status_code,
             content=exc.to_body(),
             headers=exc.headers,
+        )
+
+    @app.exception_handler(RequestValidationError)
+    async def _validation_error(_: Request, exc: RequestValidationError) -> JSONResponse:
+        """Keep FastAPI's 422 shape but never echo submitted values."""
+        errors = exc.errors()
+        for error in errors:
+            error.pop("input", None)
+            context = error.get("ctx")
+            if isinstance(context, dict):
+                error["ctx"] = {key: str(value) for key, value in context.items()}
+        return JSONResponse(
+            status_code=422,
+            content={"detail": jsonable_encoder(errors)},
         )
 
     @app.exception_handler(StarletteHTTPException)
@@ -88,6 +105,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     _register_exception_handlers(app)
     app.include_router(health_router)
+    app.include_router(wallet_router)
     return app
 
 

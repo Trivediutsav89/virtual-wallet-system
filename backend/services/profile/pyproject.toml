@@ -31,6 +31,9 @@ asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
 pythonpath = ["."]
 addopts = "-q"
+markers = [
+  "integration: requires a live PostgreSQL (profile_db_test)",
+]
 
 [tool.ruff]
 target-version = "py312"
