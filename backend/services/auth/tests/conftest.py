@@ -29,14 +29,12 @@ os.environ.setdefault("JWT_ALGORITHM", "HS256")
 os.environ.setdefault("JWT_ISSUER", "virtual-wallet-auth")
 os.environ.setdefault("ACCESS_TOKEN_TTL_MINUTES", "30")
 
-# Unit tests never connect. Integration tests replace this with the real test
-# DSN (see tests/integration/conftest.py) or exit with instructions.
-os.environ.setdefault(
-    "AUTH_DATABASE_URL",
-    os.environ.get(
-        "AUTH_TEST_DATABASE_URL",
-        "postgresql+asyncpg://auth_svc:unset@127.0.0.1:1/auth_db_test",
-    ),
+# Unit tests never connect, and /readyz must report 503 for a dead database.
+# Keep the app-level DSN unreachable regardless of AUTH_TEST_DATABASE_URL:
+# integration tests use their own engine and session override, built directly
+# from that separate DSN in tests/integration/conftest.py.
+os.environ["AUTH_DATABASE_URL"] = (
+    "postgresql+asyncpg://auth_svc:unset@127.0.0.1:1/auth_db_test"
 )
 
 from collections.abc import AsyncIterator, Iterator

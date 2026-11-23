@@ -14,6 +14,7 @@ import jwt
 import pytest
 from httpx import AsyncClient, Response
 from sqlalchemy import select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings
@@ -68,6 +69,12 @@ async def test_users_has_no_session_or_refresh_columns(db_session: AsyncSession)
 
 
 async def test_email_uniqueness_is_case_insensitive(db_session: AsyncSession) -> None:
+    """The functional UNIQUE index must reject case-only email variants.
+
+    ``pg_indexes`` renders the expression as ``lower((email)::text)``, so an
+    exact DDL-string comparison is brittle. Normalise the definition, then
+    prove the constraint with a direct insert that bypasses the service layer.
+    """
     indexdefs = list(
         (
             await db_session.execute(
@@ -75,9 +82,29 @@ async def test_email_uniqueness_is_case_insensitive(db_session: AsyncSession) ->
             )
         ).scalars()
     )
+    normalised = [
+        "".join(indexdef.split())
+        .replace("::text", "")
+        .replace("((", "(")
+        .replace("))", ")")
+        for indexdef in indexdefs
+    ]
     assert any(
-        "UNIQUE" in indexdef and "lower(email)" in indexdef for indexdef in indexdefs
+        "CREATEUNIQUEINDEX" in definition and "lower(email)" in definition
+        for definition in normalised
     ), indexdefs
+
+    insert = text(
+        "INSERT INTO users (email, password_hash) VALUES (:email, :password_hash)"
+    )
+    await db_session.execute(
+        insert, {"email": "Case@Test.example", "password_hash": "not-a-real-hash"}
+    )
+    with pytest.raises(IntegrityError):
+        await db_session.execute(
+            insert, {"email": "case@test.example", "password_hash": "not-a-real-hash"}
+        )
+    await db_session.rollback()
 
 
 # ---------------------------------------------------------------------------
