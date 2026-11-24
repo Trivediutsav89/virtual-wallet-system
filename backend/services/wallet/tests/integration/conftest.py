@@ -2,6 +2,14 @@
 
 Skips cleanly without ``WALLET_TEST_DATABASE_URL``; applies the real migration
 chain once; isolates every test in a rolled-back outer transaction.
+
+Some ledger tests create POSTED entries and cannot delete them through normal
+DML because the immutability triggers under test correctly reject UPDATE and
+DELETE. Those tests clean up with a table-level TRUNCATE, which would interfere
+with any other test using the same tables. A session-scoped PostgreSQL advisory
+lock therefore serialises this entire integration suite across pytest/xdist
+workers. The lock is acquired on a connection derived only from
+``WALLET_TEST_DATABASE_URL``.
 """
 
 from __future__ import annotations
@@ -66,6 +74,23 @@ def test_dsn() -> str:
     if not _can_connect(dsn):
         pytest.skip(f"PostgreSQL is not reachable at {_redact(dsn)}")
     return dsn
+
+
+@pytest.fixture(scope="session", autouse=True)
+async def _serialize_integration_database(test_dsn: str) -> AsyncIterator[None]:
+    """Serialise this suite so global cleanup cannot race another worker."""
+    engine = create_async_engine(test_dsn, poolclass=NullPool)
+    try:
+        async with engine.connect() as connection:
+            await connection.execute(text("SELECT pg_advisory_lock(20261124001)"))
+            await connection.commit()
+            try:
+                yield
+            finally:
+                await connection.execute(text("SELECT pg_advisory_unlock(20261124001)"))
+                await connection.commit()
+    finally:
+        await engine.dispose()
 
 
 @pytest.fixture(scope="session")

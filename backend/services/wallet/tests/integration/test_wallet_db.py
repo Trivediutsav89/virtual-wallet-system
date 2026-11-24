@@ -28,7 +28,7 @@ OTHER_HEADERS = {"X-User-Id": str(OTHER_USER_ID)}
 
 async def test_migration_head_is_applied(db_session: AsyncSession) -> None:
     version = await db_session.scalar(text("SELECT version_num FROM alembic_version"))
-    assert version == "0002_create_wallets"
+    assert version == "0004_harden_ledger_invariants"
 
 
 async def test_user_id_is_unique(db_session: AsyncSession) -> None:
