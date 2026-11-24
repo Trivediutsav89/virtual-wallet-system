@@ -46,6 +46,7 @@ EXPECTED_TABLES = {
     "ledger_transactions",
     "ledger_entries",
     "idempotency_records",
+    "ledger_opening_backfills",
 }
 EXPECTED_FUNCTIONS = {
     "reject_ledger_entry_mutation",
@@ -54,6 +55,8 @@ EXPECTED_FUNCTIONS = {
     "reject_ledger_transaction_delete",
     "assert_posted_transaction_invariants",
     "protect_ledger_account_identity",
+    "ledger_backfill_entry_delete_authorized",
+    "ledger_backfill_transaction_delete_authorized",
 }
 EXPECTED_TRIGGERS = {
     "trg_ledger_entries_immutable|ledger_entries",
@@ -71,6 +74,8 @@ EXPECTED_INDEXES = {
     "ix_ledger_entries_transaction",
     "ix_ledger_entries_account_created",
     "ix_idempotency_status_created",
+    "ux_ledger_opening_backfills_transaction",
+    "ix_ledger_opening_backfills_account",
 }
 EXPECTED_CHECK_FRAGMENTS = {
     "wallets|balance <= 9999999999999999.99",
@@ -85,6 +90,8 @@ EXPECTED_CHECK_FRAGMENTS = {
     "ledger_entries|'DEBIT'::character varying",
     "ledger_entries|(currency)::text = 'INR'::text",
     "idempotency_records|'IN_PROGRESS'::character varying",
+    "ledger_opening_backfills|opening_balance >= (0)::numeric",
+    "ledger_opening_backfills|transaction_id IS NOT NULL",
 }
 EXPECTED_FKS = {
     "ledger_accounts|wallets|r",
@@ -1380,7 +1387,7 @@ async def test_migration_downgrade_removes_only_new_objects(test_dsn: str, migra
 
         async with engine.begin() as connection:
             version = await connection.scalar(text("SELECT version_num FROM alembic_version"))
-            assert version == "0004_harden_ledger_invariants"
+            assert version == "0005_backfill_opening_balances"
             system_count = await connection.scalar(
                 text("SELECT count(*) FROM ledger_accounts WHERE account_type = ANY(:types)"),
                 {"types": list(SYSTEM_TYPES)},
@@ -1392,8 +1399,10 @@ async def test_migration_downgrade_removes_only_new_objects(test_dsn: str, migra
             )
             assert balance == Decimal("2500000.00")
     finally:
+        _ = _alembic(test_dsn, "downgrade", "0004_harden_ledger_invariants")
         async with engine.begin() as connection:
             await connection.execute(
                 text("DELETE FROM wallets WHERE user_id = :uid"), {"uid": user_id}
             )
+        _ = _alembic(test_dsn, "upgrade", "head")
         await engine.dispose()
